@@ -1,0 +1,13 @@
+# Open Rummy behind Caddy (alternative to deploy/nginx/open-rummy.conf).
+# Caddy obtains and renews HTTPS certificates automatically and proxies WebSockets
+# without extra config. The Node server serves the built client itself (WEB_ROOT)
+# with its own security headers, so everything is proxied to it.
+#
+# Install: replace example.com with your domain(s), copy to /etc/caddy/Caddyfile,
+#   sudo caddy validate --config /etc/caddy/Caddyfile && sudo systemctl reload caddy
+# Server env: TRUST_PROXY=1 (Caddy sets X-Forwarded-For to the real client address).
+
+example.com, www.example.com {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:3001
+}
