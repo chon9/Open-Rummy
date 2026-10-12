@@ -1,0 +1,22 @@
+{
+  "name": "@open-rummy/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "build": "node build.mjs",
+    "start": "node dist/server.js",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@open-rummy/shared": "0.1.0",
+    "ws": "8.22.0"
+  },
+  "devDependencies": {
+    "@types/ws": "8.18.2",
+    "esbuild": "0.28.2",
+    "tsx": "4.23.15",
+    "vitest": "3.2.7"
+  }
+}

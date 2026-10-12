@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-Hans">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0b1530" />
+    <meta name="description" content="拉米麻将 Open Rummy - Malaysian Mahjong Rummy (LAMI) with 3D anime avatars. Play vs bots or online with friends." />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <title>拉米麻将 Open Rummy</title>
+    <style>
+      /* pre-boot background so there is no white flash before the CSS bundle loads */
+      html, body { margin: 0; height: 100%; background: #070b18; color: #f4f1e8; }
+      .boot { position: fixed; inset: 0; display: grid; place-items: center; font: 900 40px 'STKaiti', 'KaiTi', serif; color: #e9c46a; letter-spacing: 0.08em; }
+    </style>
+  </head>
+  <body>
+    <div id="app"><div class="boot">拉米麻将</div></div>
+    <noscript>拉米麻将 Open Rummy needs JavaScript to run.</noscript>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

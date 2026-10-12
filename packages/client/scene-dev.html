@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Scene Harness</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #120a07; color: #f4e6cc; font: 13px system-ui, sans-serif; }
+      #stage { position: absolute; inset: 0; }
+      #panel { position: absolute; left: 8px; top: 8px; display: flex; flex-wrap: wrap; gap: 4px; max-width: 60vw; z-index: 2; }
+      #panel button { background: rgba(30,20,14,0.85); color: inherit; border: 1px solid #7a5a3a; border-radius: 6px; padding: 4px 8px; cursor: pointer; }
+      #log { position: absolute; left: 8px; bottom: 8px; z-index: 2; background: rgba(0,0,0,0.5); padding: 4px 8px; border-radius: 6px; max-width: 50vw; }
+      #portrait { position: absolute; right: 8px; top: 8px; z-index: 2; display: flex; gap: 6px; }
+      #portrait img { width: 72px; height: 72px; border-radius: 50%; background: radial-gradient(#5a3a2a, #2a1a12); }
+      #stageBox { position: absolute; right: 8px; bottom: 8px; width: 180px; height: 300px; z-index: 2; background: rgba(0,0,0,0.3); border-radius: 10px; }
+    </style>
+  </head>
+  <body>
+    <div id="stage"></div>
+    <div id="panel"></div>
+    <div id="portrait"></div>
+    <div id="stageBox"></div>
+    <div id="log">loading...</div>
+    <script type="module" src="/src/scene/dev-harness.ts"></script>
+  </body>
+</html>

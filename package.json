@@ -1,0 +1,27 @@
+{
+  "name": "open-rummy",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Malaysian Mahjong Rummy (拉米麻将 / LAMI) - 3D anime browser game with bots and online rooms",
+  "workspaces": [
+    "packages/shared",
+    "packages/server",
+    "packages/client"
+  ],
+  "scripts": {
+    "dev:client": "npm run dev -w @open-rummy/client",
+    "dev:server": "npm run dev -w @open-rummy/server",
+    "build": "npm run build -w @open-rummy/client && npm run build -w @open-rummy/server",
+    "test": "npm run test -w @open-rummy/shared && npm run test -w @open-rummy/server",
+    "typecheck": "tsc -p packages/shared && tsc -p packages/server && tsc -p packages/client",
+    "start": "node packages/server/dist/server.js",
+    "check-secrets": "node scripts/check-secrets.mjs"
+  },
+  "engines": {
+    "node": ">=22.11.0"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "@types/node": "22.20.5"
+  }
+}

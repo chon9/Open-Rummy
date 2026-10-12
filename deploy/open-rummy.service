@@ -1,0 +1,66 @@
+# Open Rummy game server - systemd unit.
+# Installed by deploy/setup-lightsail.sh to /etc/systemd/system/open-rummy.service.
+# Configuration comes from /etc/open-rummy.env (see .env.example); the file is optional.
+#   sudo systemctl status open-rummy
+#   sudo journalctl -u open-rummy -f
+
+[Unit]
+Description=Open Rummy (Malaysian Mahjong Rummy) game server
+Documentation=https://github.com/chon9/Open-Rummy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=openrummy
+Group=openrummy
+WorkingDirectory=/srv/open-rummy
+Environment=NODE_ENV=production
+Environment=PORT=3001
+Environment=HOST=127.0.0.1
+Environment=WEB_ROOT=/srv/open-rummy/web
+# nginx (deploy/nginx/open-rummy.conf) is the only client of this port and sets X-Forwarded-For
+# to the real client address; trust exactly that one hop for the per-IP abuse limits.
+Environment=TRUST_PROXY=1
+# Keep V8's heap well below MemoryMax so GC kicks in before the cgroup OOM killer does.
+Environment=NODE_OPTIONS=--max-old-space-size=256
+# Values in the env file override the defaults above. "-" = do not fail if it is missing.
+EnvironmentFile=-/etc/open-rummy.env
+ExecStart=/usr/bin/node /srv/open-rummy/server/server.js
+Restart=always
+RestartSec=2
+# Give open WebSocket games a moment to receive close frames on restart.
+TimeoutStopSec=10
+KillSignal=SIGTERM
+
+# Resource limits (sized for a 512 MB - 1 GB Lightsail instance).
+MemoryMax=400M
+TasksMax=128
+LimitNOFILE=8192
+
+# Hardening. The server only reads its code and listens on a socket; it writes nothing to disk,
+# so no ReadWritePaths are needed. Do not add MemoryDenyWriteExecute: V8's JIT needs W+X pages.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RemoveIPC=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallArchitectures=native
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

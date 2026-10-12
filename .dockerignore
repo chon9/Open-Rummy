@@ -1,0 +1,40 @@
+# Keep the Docker build context small and free of secrets.
+.git
+.gitignore
+.gitattributes
+.github
+node_modules
+**/node_modules
+**/dist
+**/build
+coverage
+**/coverage
+test-results
+playwright-report
+.playwright-mcp
+.claude
+.vscode
+.idea
+*.log
+*.tsbuildinfo
+.vite
+
+# Secrets and local environment files
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+LightsailDefaultKey*
+secrets
+.aws
+
+# Not needed to build the image (docs, drafts, deploy kit)
+docs
+deploy
+*.md
+Dockerfile
+.dockerignore

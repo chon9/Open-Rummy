@@ -1,0 +1,29 @@
+# Normalise text files to LF in the repository and working tree.
+* text=auto eol=lf
+
+# Shell scripts must stay LF or they break on Linux servers.
+*.sh text eol=lf
+
+# Windows-only scripts keep CRLF.
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
+# Binary assets: never diff or convert line endings.
+*.vrm binary
+*.vrma binary
+*.glb binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.gif binary
+*.ico binary
+*.ktx2 binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.mp3 binary
+*.ogg binary
+*.wav binary
+*.wasm binary

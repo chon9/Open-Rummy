@@ -1,0 +1,15 @@
+{
+  "name": "拉米麻将 Open Rummy",
+  "short_name": "Open Rummy",
+  "description": "Malaysian Mahjong Rummy (LAMI) with 3D anime avatars. Play vs bots or online.",
+  "lang": "zh-Hans",
+  "start_url": "/",
+  "scope": "/",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#070b18",
+  "theme_color": "#0b1530",
+  "icons": [
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
