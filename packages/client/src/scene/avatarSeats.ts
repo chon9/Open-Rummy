@@ -35,6 +35,25 @@ export function seatedScale(hipsHeight: number): number {
   return THREE.MathUtils.clamp(SEATED_HIPS_REF / hipsHeight, 1, 1.1);
 }
 
+export interface AvatarRender {
+  castShadow: boolean;
+  outlines: boolean;
+}
+
+/** Apply shadow casting and outline visibility to a VRM scene graph. */
+function applyAvatarRender(root: THREE.Object3D, render: AvatarRender): void {
+  root.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    mesh.castShadow = render.castShadow;
+    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    for (const m of mats) {
+      // three-vrm MToon outline passes are separate materials flagged isOutline
+      if ((m as { isOutline?: boolean }).isOutline) m.visible = render.outlines;
+    }
+  });
+}
+
 export class SeatedAvatars {
   private parent: THREE.Object3D;
   private entries = new Map<number, Entry>();
@@ -42,6 +61,7 @@ export class SeatedAvatars {
   private n = 4;
   private active: number | null = null;
   private springBones = true;
+  private render: AvatarRender = { castShadow: false, outlines: true };
   private tokenSeq = 0;
   private chairGeo: { seat: THREE.BufferGeometry; back: THREE.BufferGeometry; cushion: THREE.BufferGeometry; leg: THREE.BufferGeometry };
   private chairMat: THREE.MeshStandardMaterial;
@@ -150,6 +170,7 @@ export class SeatedAvatars {
               }
               const rig = new AvatarRig(vrm, 'seated');
               rig.springBones = this.springBones;
+              applyAvatarRender(vrm.scene, this.render);
               entry.rig = rig;
               entry.anchor.add(rig.root);
               this.place(entry);
@@ -245,6 +266,14 @@ export class SeatedAvatars {
 
   seats(): number[] {
     return [...this.entries.keys()];
+  }
+
+  /** Shadow casting and MToon outlines for all seated avatars (each roughly doubles avatar draw calls). */
+  setRender(render: AvatarRender): void {
+    this.render = { ...render };
+    for (const e of this.entries.values()) {
+      if (e.rig) applyAvatarRender(e.rig.vrm.scene, this.render);
+    }
   }
 
   setSpringBones(on: boolean): void {

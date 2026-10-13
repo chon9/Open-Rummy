@@ -27,7 +27,8 @@ export class Tile3D {
 }
 
 function colouredBox(w: number, h: number, d: number, z: number, colour: THREE.Color): THREE.BufferGeometry {
-  const g = new RoundedBoxGeometry(w, h, d, 3, TILE_RADIUS);
+  // 2 bevel segments: visually identical at table distance, ~half the triangles of 3
+  const g = new RoundedBoxGeometry(w, h, d, 2, TILE_RADIUS);
   g.translate(0, 0, z);
   const count = g.getAttribute('position').count;
   const colours = new Float32Array(count * 3);
@@ -48,7 +49,10 @@ export class TileFactory {
   private faceMats = new Map<string, THREE.MeshStandardMaterial>();
   private pool: Tile3D[] = [];
   private anisotropy: number;
+  /** tiles receive shadows (medium/high) */
   shadows = true;
+  /** tiles cast shadows (high only: 100+ small casters double the shadow-pass cost) */
+  castShadows = false;
 
   constructor(anisotropy: number) {
     this.anisotropy = anisotropy;
@@ -104,7 +108,7 @@ export class TileFactory {
     t.obj.scale.setScalar(1);
     t.obj.position.set(0, 0, 0);
     t.obj.quaternion.identity();
-    t.body.castShadow = this.shadows;
+    t.body.castShadow = this.castShadows;
     t.body.receiveShadow = this.shadows;
     this.setDead(t, false);
     this.setFace(t, id);
@@ -140,11 +144,12 @@ export class TileFactory {
     if (this.pool.length < 300) this.pool.push(t);
   }
 
-  setShadows(on: boolean): void {
-    this.shadows = on;
+  setShadows(receive: boolean, cast: boolean): void {
+    this.shadows = receive;
+    this.castShadows = cast;
     for (const t of this.pool) {
-      t.body.castShadow = on;
-      t.body.receiveShadow = on;
+      t.body.castShadow = cast;
+      t.body.receiveShadow = receive;
     }
   }
 

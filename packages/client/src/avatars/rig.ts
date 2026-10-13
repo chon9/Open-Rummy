@@ -169,13 +169,13 @@ export class AvatarRig {
 
   /** Set where the avatar looks when idle (world space). */
   lookAtWorld(world: THREE.Vector3): void {
-    this.root.updateMatrixWorld();
+    this.root.updateWorldMatrix(true, false); // root only: the bone tree is updated by the renderer
     this.lookDesired.copy(this.root.worldToLocal(_w.copy(world)));
   }
 
   /** Configure world positions used by clip look hints. */
   setLookAnchors(tableWorld: THREE.Vector3, viewerWorld: THREE.Vector3): void {
-    this.root.updateMatrixWorld();
+    this.root.updateWorldMatrix(true, false); // root only: the bone tree is updated by the renderer
     this.tableTarget.copy(this.root.worldToLocal(_w.copy(tableWorld)));
     this.viewerTarget.copy(this.root.worldToLocal(_w.copy(viewerWorld)));
   }

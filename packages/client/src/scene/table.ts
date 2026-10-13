@@ -83,6 +83,8 @@ interface MoveOpts {
 }
 
 const MAX_BATCH_SECONDS = 7;
+/** sustained frame rate below this triggers the automatic quality governor */
+const FPS_FLOOR = 45;
 
 function cloneMeld(m: Meld): Meld {
   return { ...m, tiles: m.tiles.map((t) => ({ tileId: t.tileId, rep: { ...t.rep } })) };
@@ -187,6 +189,27 @@ class TableScene implements TableSceneApi {
   private generation = 0;
   /** true while shader variants compile after a quality change (rendering pauses) */
   private compiling = false;
+  /** governor resolution multiplier (1 = quality default) */
+  private resScale = 1;
+  private perf = {
+    frames: 0,
+    windowStart: 0,
+    graceUntil: 0,
+    slowSeconds: 0,
+    shadowsOff: false,
+    outlinesOff: false,
+    springOff: false,
+    reset(now: number) {
+      this.frames = 0;
+      this.windowStart = now;
+      this.graceUntil = now + 5000;
+      this.slowSeconds = 0;
+      this.shadowsOff = false;
+      this.outlinesOff = false;
+      this.springOff = false;
+    },
+  };
+  private fpsEl: HTMLDivElement | null = null;
 
   // -------------------------------------------------------------------------
   // Lifecycle
@@ -219,6 +242,15 @@ class TableScene implements TableSceneApi {
       'position:absolute;inset:0;pointer-events:none;background:radial-gradient(ellipse at 50% 46%, rgba(0,0,0,0) 52%, rgba(18,6,2,0.55) 100%);';
     container.appendChild(overlay);
     this.overlay = overlay;
+
+    if (/[?&]fps(=|&|$)/.test(location.search)) {
+      const fpsEl = document.createElement('div');
+      fpsEl.style.cssText =
+        'position:absolute;left:8px;top:52px;z-index:5;pointer-events:none;font:12px/1.4 monospace;color:#9ff;background:rgba(0,0,0,0.55);padding:2px 6px;border-radius:4px;';
+      container.appendChild(fpsEl);
+      this.fpsEl = fpsEl;
+      (window as unknown as { __rummyScene?: THREE.Scene }).__rummyScene = this.scene;
+    }
 
     // image-based lighting for glossy tiles and wood
     this.pmrem = new THREE.PMREMGenerator(renderer);
@@ -299,6 +331,7 @@ class TableScene implements TableSceneApi {
       r.domElement.remove();
     }
     this.overlay?.remove();
+    this.fpsEl?.remove();
     this.renderer = null;
     this.container = null;
   }
@@ -1477,27 +1510,45 @@ class TableScene implements TableSceneApi {
   // Frame loop
   // -------------------------------------------------------------------------
 
+  /** Apply a chosen quality level; also resets the automatic FPS governor. */
   private applyQuality(q: Quality): void {
+    this.resScale = 1;
+    this.perf.reset(performance.now());
+    this.applyRenderSettings(q);
+  }
+
+  /** Effective device pixel ratio: quality cap times the governor's resolution scale. */
+  private applyPixelRatio(): void {
     const r = this.renderer;
     if (!r) return;
     const dpr = window.devicePixelRatio || 1;
-    r.setPixelRatio(q === 'low' ? 1 : Math.min(dpr, q === 'high' ? 2 : 1.5));
-    const shadows = q !== 'low';
+    const q = this.quality;
+    const cap = q === 'low' ? 1 : Math.min(dpr, q === 'high' ? 2 : 1.25);
+    r.setPixelRatio(Math.max(0.6, cap * this.resScale));
+  }
+
+  private applyRenderSettings(q: Quality): void {
+    const r = this.renderer;
+    if (!r) return;
+    this.applyPixelRatio();
+    const shadows = q !== 'low' && !this.perf.shadowsOff;
+    const tileCast = shadows && q === 'high';
     const changed = r.shadowMap.enabled !== shadows;
     r.shadowMap.enabled = shadows;
-    this.env?.setQuality(q);
-    this.tiles?.setShadows(shadows);
+    this.env?.setQuality(shadows ? q : 'low');
+    this.tiles?.setShadows(shadows, tileCast);
     this.scene.traverse((o) => {
       const mesh = o as THREE.Mesh;
       if (mesh.isMesh && o.parent === this.table && mesh.geometry !== this.hitGeo) {
-        o.castShadow = shadows;
+        o.castShadow = tileCast;
       }
     });
     for (const t of this.allTiles()) {
-      t.body.castShadow = shadows;
+      t.body.castShadow = tileCast;
       t.body.receiveShadow = shadows;
     }
-    this.avatars?.setSpringBones(q !== 'low');
+    this.avatars?.setSpringBones(q !== 'low' && !this.perf.springOff);
+    this.avatars?.setRender({ castShadow: shadows && q === 'high', outlines: q !== 'low' && !this.perf.outlinesOff });
     if (changed) {
       this.scene.traverse((o) => {
         const mats = (o as THREE.Mesh).material;
@@ -1591,6 +1642,51 @@ class TableScene implements TableSceneApi {
     }
 
     if (!this.compiling) r.render(this.scene, this.camera);
+    this.governFps(now);
+  }
+
+  /**
+   * Automatic quality governor. Measures real frame rate once per second and, when it stays
+   * below FPS_FLOOR, first lowers the render resolution step by step, then switches shadows
+   * off. It never raises quality on its own (avoids oscillation); choosing a quality in
+   * Settings resets it. Optional readout with ?fps in the page URL.
+   */
+  private governFps(now: number): void {
+    const p = this.perf;
+    p.frames++;
+    const span = now - p.windowStart;
+    if (span < 1000) return;
+    const fps = (p.frames * 1000) / span;
+    p.frames = 0;
+    p.windowStart = now;
+    if (this.fpsEl && this.renderer) {
+      const info = this.renderer.info.render;
+      this.fpsEl.textContent = `${fps.toFixed(0)} fps | ${info.calls} calls | ${(info.triangles / 1000).toFixed(0)}k tris | x${this.renderer.getPixelRatio().toFixed(2)}${p.shadowsOff ? ' | no shadows' : ''}${p.outlinesOff ? ' | no outlines' : ''}${p.springOff ? ' | no hair physics' : ''}`;
+    }
+    // ignore warm-up, hidden tabs, shader compiles and loading hitches
+    if (now < p.graceUntil || document.hidden || this.compiling) {
+      p.slowSeconds = 0;
+      return;
+    }
+    p.slowSeconds = fps < FPS_FLOOR ? p.slowSeconds + 1 : 0;
+    if (p.slowSeconds < 2) return;
+    p.slowSeconds = 0;
+    p.graceUntil = now + 2500;
+    if (this.resScale > 0.7) {
+      this.resScale = Math.round((this.resScale - 0.15) * 100) / 100;
+      this.applyPixelRatio();
+      this.resize();
+    } else if (!p.shadowsOff && this.quality !== 'low') {
+      p.shadowsOff = true;
+      this.applyRenderSettings(this.quality);
+    } else if (!p.outlinesOff && this.quality !== 'low') {
+      p.outlinesOff = true;
+      this.applyRenderSettings(this.quality);
+    } else if (!p.springOff && this.quality !== 'low') {
+      // hair/cloth physics is the largest remaining CPU cost per avatar
+      p.springOff = true;
+      this.avatars?.setSpringBones(false);
+    }
   }
 
   private camPos = new THREE.Vector3();
