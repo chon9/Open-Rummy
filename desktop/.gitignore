@@ -1,0 +1,5 @@
+# desktop-only build artefacts (root .gitignore already covers node_modules/ and dist/)
+node_modules/
+dist/
+release/
+*.log

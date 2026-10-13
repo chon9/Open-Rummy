@@ -19,7 +19,10 @@ const stageBox = document.getElementById('stageBox') as HTMLElement;
 const params = new URLSearchParams(location.search);
 const quality = (params.get('q') as Quality | null) ?? 'medium';
 const YOU = 0;
-const AV = ['mei', 'kaya', 'pandan', 'lingling'];
+/** ?n=3|4|5 picks the player count (default 4) */
+const N = Math.min(5, Math.max(3, Number(params.get('n')) || 4));
+const SEATS = Array.from({ length: N }, (_, i) => i);
+const AV = ['mei', 'kaya', 'pandan', 'lingling', 'rambutan'].slice(0, N);
 
 const scene = createTableScene();
 const log = (s: string): void => {
@@ -28,13 +31,13 @@ const log = (s: string): void => {
 };
 
 // --- fake game model ---------------------------------------------------------
-const counts = [0, 0, 0, 0];
-const status: PlayerStatus[] = ['ALIVE', 'ALIVE', 'ALIVE', 'ALIVE'];
+const counts = SEATS.map(() => 0);
+const status: PlayerStatus[] = SEATS.map(() => 'ALIVE');
 let melds: Meld[] = [];
 let phase: PlayerView['phase'] = 'LOBBY';
 let turn: number | null = null;
 let deadWall = 0;
-let revealed: (string[] | null)[] = [null, null, null, null];
+let revealed: (string[] | null)[] = SEATS.map(() => null);
 let version = 0;
 
 function run(id: string, owner: number, colour: 'B' | 'R' | 'Y' | 'G', tiles: [string, number][]): Meld {
@@ -44,11 +47,32 @@ function set(id: string, owner: number, rank: 9, tiles: string[]): Meld {
   return { id, type: 'SET', ownerSeat: owner, rank, tiles: tiles.map((tileId) => ({ tileId, rep: { colour: null, rank } })) };
 }
 
+const RANK_CODE: Record<number, string> = { 1: 'A', 11: 'J', 12: 'Q', 13: 'K', 14: 'A' };
+const COLS = ['B', 'R', 'Y', 'G'] as const;
+/** 4 x 14-tile runs, 6 runs of 8, 6 sets of 6 (only the first `limit` melds). */
+function worstCaseMelds(limit: number): Meld[] {
+  const out: Meld[] = [];
+  let k = 0;
+  const id = (c: string, r: number): string => `${c}${RANK_CODE[r] ?? r}_${(k++ % 2) + 1}`;
+  COLS.forEach((c, i) => out.push(run(`w${i + 1}`, i % N, c, Array.from({ length: 14 }, (_, j) => [id(c, j + 1), j + 1] as [string, number]))));
+  for (let i = 0; i < 6; i++) {
+    const c = COLS[i % 4];
+    const lo = 2 + (i % 3);
+    out.push(run(`w${5 + i}`, i % N, c, Array.from({ length: 8 }, (_, j) => [id(c, lo + j), lo + j] as [string, number])));
+  }
+  for (let i = 0; i < 6; i++) {
+    const rank = 2 + i;
+    const tiles = Array.from({ length: 6 }, (_, j) => `${COLS[j % 4]}${rank}_${(j >> 2) + 1}`);
+    out.push({ id: `w${11 + i}`, type: 'SET', ownerSeat: i % N, rank: rank as 9, tiles: tiles.map((tileId) => ({ tileId, rep: { colour: null, rank } })) });
+  }
+  return out.slice(0, limit);
+}
+
 function view(): PlayerView {
   version++;
   return {
     you: YOU,
-    cfg: DEFAULT_RULES,
+    cfg: { ...DEFAULT_RULES, players: N },
     phase,
     handNo: 1,
     dealer: 0,
@@ -56,7 +80,7 @@ function view(): PlayerView {
     wallBreak: phase === 'LOBBY' ? null : { dice: [3, 5], wallSeat: 0, stack: 7 },
     turn,
     deadline: null,
-    players: [0, 1, 2, 3].map((seat) => ({
+    players: SEATS.map((seat) => ({
       seat,
       name: `P${seat}`,
       isBot: seat !== YOU,
@@ -94,15 +118,13 @@ const steps: Record<string, () => Promise<void>> = {
     phase = 'PORT';
     counts.fill(20);
     status.fill('ALIVE');
-    revealed = [null, null, null, null];
+    revealed = SEATS.map(() => null);
     melds = [];
-    deadWall = 32;
+    deadWall = 112 - 20 * N;
     turn = null;
     await play([
       { type: 'HAND_START', handNo: 1, dealer: 0, wallBreak: { dice: [3, 5], wallSeat: 0, stack: 7 }, firstSeat: 1 },
-      { type: 'DEAL', seat: 1, count: 20 },
-      { type: 'DEAL', seat: 2, count: 20 },
-      { type: 'DEAL', seat: 3, count: 20 },
+      ...SEATS.slice(1).map((seat) => ({ type: 'DEAL' as const, seat, count: 20 })),
       { type: 'DEAL', seat: 0, count: 20 },
     ]);
   },
@@ -224,7 +246,7 @@ const steps: Record<string, () => Promise<void>> = {
       2: ['BA_1', 'B8_1', 'G10_1', 'GJ_2', 'GQ_1', 'Y4_2', 'YQ_1', 'R6_2', 'JK_3', 'B10_2', 'GK_1'],
       3: ['G5_1', 'G6_1', 'Y10_1', 'YK_1', 'R2_2', 'R3_2', 'BJ_2', 'B5_2', 'JK_5', 'Y5_2', 'G2_2', 'YA_2', 'R4_2', 'B3_1', 'RJ_1'],
     };
-    revealed = [hands[0], hands[1], hands[2], hands[3]];
+    revealed = SEATS.map((seat) => hands[seat] ?? []);
     const result: HandResult = {
       handNo: 1,
       kind: 'GAME',
@@ -240,6 +262,22 @@ const steps: Record<string, () => Promise<void>> = {
       { type: 'GAME_PAI', seat: 1 },
       { type: 'HAND_END', result },
     ]);
+  },
+  /**
+   * Late hand: a worst-case table (4 x 14-tile runs, 6 runs of 8, 6 sets of 6) snapped in
+   * with sync(). ?racks=<count> sets the opponents' hand size (default 6).
+   */
+  async late() {
+    phase = 'PLAY';
+    deadWall = 112 - 20 * N;
+    revealed = SEATS.map(() => null);
+    status.fill('ALIVE');
+    const rk = Number(params.get('racks')) || 6;
+    for (const s of SEATS) counts[s] = s === YOU ? 4 : rk;
+    melds = worstCaseMelds(Number(params.get('melds')) || 16);
+    turn = 1;
+    scene.sync(view());
+    log(`late: ${melds.length} melds, ${melds.reduce((a, m) => a + m.tiles.length, 0)} tiles`);
   },
   async all() {
     for (const k of ['deal', 'port', 'extend', 'cut', 'follow', 'own', 'swap', 'dead', 'game']) {
@@ -313,7 +351,10 @@ async function main(): Promise<void> {
     (window as unknown as Record<string, unknown>).__stage = st;
   }
   (window as unknown as Record<string, unknown>).__harness = { scene, steps, view };
-  if (params.get('auto')) void steps.all();
+  const auto = params.get('auto');
+  if (auto) void (steps[auto] ?? steps.all)();
+  // ?ui=0 hides the harness chrome (clean screenshots)
+  if (params.get('ui') === '0') for (const el of [panel, logEl, portraitBox, stageBox]) el.style.display = 'none';
 }
 
 void main();

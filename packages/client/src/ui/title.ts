@@ -10,7 +10,10 @@ import { setPrefs } from './prefs';
 
 export interface TitleNav {
   offline(): void;
-  online(): void;
+  /** WebSocket online rooms (hidden when absent, e.g. in the desktop build) */
+  online?(): void;
+  /** Steam lobby (desktop build only; hidden when absent) */
+  steam?(): void;
   rules(): void;
   settings(): void;
   credits(): void;
@@ -76,7 +79,8 @@ export function titleScreen(nav: TitleNav): Screen {
       ),
       h('nav', { class: 'menu', 'aria-label': t('title.menu') },
         item(t('menu.offline'), t('menu.offlineSub'), nav.offline, true),
-        item(t('menu.online'), t('menu.onlineSub'), nav.online, true),
+        nav.steam ? item(t('menu.steam'), t('menu.steamSub'), nav.steam, true) : null,
+        nav.online ? item(t('menu.online'), t('menu.onlineSub'), nav.online, true) : null,
         item(t('menu.rules'), t('menu.rulesSub'), nav.rules),
         item(t('menu.settings'), t('menu.settingsSub'), nav.settings),
         item(t('menu.credits'), t('menu.creditsSub'), nav.credits),

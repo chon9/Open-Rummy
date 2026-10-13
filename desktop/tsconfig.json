@@ -1,0 +1,10 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM"],
+    "types": ["node"],
+    "typeRoots": ["./node_modules/@types"],
+    "noEmit": true
+  },
+  "include": ["src/**/*.ts", "vite.config.ts", "../packages/client/src/net/desktopBridge.ts"]
+}

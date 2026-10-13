@@ -1,0 +1,87 @@
+{
+  "name": "open-rummy-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Open Rummy Windows desktop build (Electron) with Steam lobbies and P2P via steamworks.js",
+  "main": "dist/main.js",
+  "scripts": {
+    "postinstall": "node --experimental-require-module node_modules/electron/install.js",
+    "build:renderer": "node ../node_modules/vite/bin/vite.js build --config vite.config.ts",
+    "build:main": "node build.mjs",
+    "build": "npm run build:renderer && npm run build:main",
+    "typecheck": "tsc -p tsconfig.json",
+    "start": "electron .",
+    "dist": "npm run build && node --experimental-require-module node_modules/electron-builder/cli.js --win portable nsis --x64",
+    "dist:dir": "npm run build && node --experimental-require-module node_modules/electron-builder/cli.js --win --x64 --dir"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "electron": "44.4.5",
+    "electron-builder": "26.15.3",
+    "esbuild": "0.28.2",
+    "typescript": "5.9.3"
+  },
+  "dependencies": {
+    "steamworks.js": "0.4.0"
+  },
+  "allowScripts": {
+    "electron@44.4.5": true,
+    "esbuild@0.28.2": true,
+    "electron-winstaller@5.4.0": true
+  },
+  "build": {
+    "appId": "com.chon9.openrummy",
+    "productName": "Open Rummy",
+    "directories": {
+      "output": "release",
+      "buildResources": "build-resources"
+    },
+    "files": [
+      "dist/**/*",
+      "!dist/**/*.map",
+      "package.json",
+      "!node_modules/steamworks.js/dist/linux64/**",
+      "!node_modules/steamworks.js/dist/osx/**",
+      "!node_modules/steamworks.js/dist/win64/*.lib"
+    ],
+    "asarUnpack": [
+      "**/*.node",
+      "node_modules/steamworks.js/dist/win64/**"
+    ],
+    "extraFiles": [
+      {
+        "from": "steam_appid.txt",
+        "to": "steam_appid.txt"
+      },
+      {
+        "from": "node_modules/steamworks.js/dist/win64/steam_api64.dll",
+        "to": "steam_api64.dll"
+      }
+    ],
+    "npmRebuild": false,
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "OpenRummy-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "OpenRummy-Portable-${version}.${ext}"
+    }
+  }
+}

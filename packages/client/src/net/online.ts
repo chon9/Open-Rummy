@@ -1,7 +1,8 @@
 /**
  * Online transport: WebSocket client for the authoritative server.
  *
- * - same-origin `/ws` (ws: or wss: following the page protocol)
+ * - same-origin `/ws` (ws: or wss: following the page protocol), or the URL set with
+ *   `setServerUrl` (desktop build: the page origin is app://, see serverUrl.ts)
  * - `hello` handshake with a session token; it is kept in sessionStorage only while
  *   we hold a seat, so a refresh or dropped connection resumes the same seat
  * - heartbeat ping; a silent connection is closed and re-opened
@@ -13,7 +14,6 @@ import {
   HEARTBEAT_MS,
   MAX_NAME_LENGTH,
   PROTOCOL_VERSION,
-  WS_PATH,
   type Action,
   type BotLevel,
   type PlayerView,
@@ -24,6 +24,7 @@ import {
   type ServerMessage,
 } from '@open-rummy/shared';
 import type { Transport, TransportHandlers } from './transport';
+import { serverUrl } from './serverUrl';
 import { t, tDyn } from '../i18n';
 
 const TOKEN_KEY = 'openrummy.session';
@@ -48,10 +49,6 @@ function saveToken(token: string | null): void {
   }
 }
 
-function wsUrl(): string {
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${proto}//${location.host}${WS_PATH}`;
-}
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const isStr = (v: unknown): v is string => typeof v === 'string';
@@ -269,7 +266,7 @@ export class OnlineTransport implements Transport {
     this.setState('connecting');
     let ws: WebSocket;
     try {
-      ws = new WebSocket(wsUrl());
+      ws = new WebSocket(serverUrl());
     } catch {
       this.scheduleReconnect();
       return;

@@ -29,12 +29,13 @@ import {
 } from '@open-rummy/shared';
 import type { MeldPick, Quality, Reaction, SeatAvatar, TableSceneApi } from './api';
 import { SeatedAvatars } from './avatarSeats';
-import { COLOURS_3D, TABLE_HALF, TABLE_Y, TILE_D, TILE_H, TILE_W } from './constants';
+import { COLOURS_3D, HAND_WRIST, TABLE_HALF, TABLE_Y, TILE_D, TILE_H, TILE_W } from './constants';
 import { Confetti, Flashes, createDice, diceFaceQuat } from './effects';
 import { buildEnvironment, type Environment } from './environment';
 import {
-  cornerAngles,
+  cameraRig,
   deadWallXform,
+  diceRestPos,
   layoutMelds,
   meldTileXform,
   ownOriginXform,
@@ -44,13 +45,24 @@ import {
   relSeat,
   seatAngle,
   seatDir,
-  seatTangent,
   wallSlots,
+  type MeldLayoutOptions,
   type MeldSlot,
   type RackState,
   type Xform,
 } from './layout';
 import { Tile3D, TileFactory } from './tileFactory';
+import { handOk, handStats, nominalRackBoxes, tileBoxFromObject, type HandStats, type TileBox } from './handCheck';
+import { CLIPS, SEATED_HAND, SEATED_POSE } from '../avatars/gestures';
+
+interface HandReport {
+  seat: number;
+  avatarId: string;
+  rel: number;
+  n: number;
+  ok: boolean;
+  hands: HandStats[];
+}
 
 interface MeldVis {
   meld: Meld;
@@ -251,6 +263,19 @@ class TableScene implements TableSceneApi {
       this.fpsEl = fpsEl;
       (window as unknown as { __rummyScene?: THREE.Scene }).__rummyScene = this.scene;
     }
+    if (/[?&]debug(=|&|$)/.test(location.search)) {
+      // geometry probes for development (hands vs racks); see handCheck.ts
+      (window as unknown as { __rummyDebug?: unknown }).__rummyDebug = {
+        table: this,
+        pose: SEATED_POSE,
+        clips: CLIPS,
+        hand: SEATED_HAND,
+        wrist: HAND_WRIST,
+        refit: () => this.avatars?.debugRefit(),
+        handReport: () => this.handReport(),
+        trackHands: (ms: number) => this.trackHands(ms),
+      };
+    }
 
     // image-based lighting for glossy tiles and wood
     this.pmrem = new THREE.PMREMGenerator(renderer);
@@ -395,6 +420,53 @@ class TableScene implements TableSceneApi {
   setQuality(q: Quality): void {
     this.quality = q;
     if (this.mounted) this.applyQuality(q);
+  }
+
+  // -------------------------------------------------------------------------
+  // Debug probes (?debug)
+  // -------------------------------------------------------------------------
+
+  private handReport(): HandReport[] {
+    const rigs = this.avatars?.debugRigs() ?? [];
+    const actual: TileBox[] = [];
+    for (const [seat, rack] of this.racks) {
+      rack.tiles.forEach((t, i) => {
+        if (t.obj.visible && t.obj.parent) actual.push(tileBoxFromObject(t.obj, `seat${seat}#${i}`));
+      });
+    }
+    return rigs.map((r) => {
+      const boxes = [...actual, ...nominalRackBoxes(r.angle, TABLE_Y)];
+      const hands = (['left', 'right'] as const).map((side) => handStats(r.rig.vrm, side, r.angle, TABLE_Y, boxes));
+      return { seat: r.seat, avatarId: r.avatarId, rel: relSeat(r.seat, this.camSeat, this.n), n: this.n, ok: hands.every(handOk), hands };
+    });
+  }
+
+  /** Sample handReport every frame for `ms`; keeps the worst value per seat and hand. */
+  private trackHands(ms: number): Promise<HandReport[]> {
+    const worst = new Map<string, HandReport>();
+    const end = performance.now() + ms;
+    return new Promise((resolve) => {
+      const step = (): void => {
+        for (const r of this.handReport()) {
+          const prev = worst.get(String(r.seat));
+          if (!prev) {
+            worst.set(String(r.seat), r);
+            continue;
+          }
+          prev.ok = prev.ok && r.ok;
+          r.hands.forEach((h, k) => {
+            const p = prev.hands[k];
+            p.inside = Math.max(p.inside, h.inside);
+            p.minGap = Math.min(p.minGap, h.minGap);
+            p.minRadial = Math.min(p.minRadial, h.minRadial);
+            p.minY = Math.min(p.minY, h.minY);
+          });
+        }
+        if (performance.now() < end) requestAnimationFrame(step);
+        else resolve([...worst.values()]);
+      };
+      step();
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -670,7 +742,11 @@ class TableScene implements TableSceneApi {
    * `animate` is false); tiles in `skip` are left for the caller to fly in.
    */
   private relayoutMelds(animate: boolean, skip?: Set<Tile3D>): Map<string, MeldSlot> {
-    const slots = layoutMelds([...this.melds.values()].map((v) => v.meld), this.n);
+    const slots = layoutMelds(
+      [...this.melds.values()].map((v) => v.meld),
+      this.n,
+      this.meldLayoutOptions(),
+    );
     for (const vis of this.melds.values()) {
       const slot = slots.get(vis.meld.id) ?? null;
       vis.slot = slot;
@@ -690,6 +766,22 @@ class TableScene implements TableSceneApi {
       });
     }
     return slots;
+  }
+
+  /**
+   * Keep-out zones for the meld layout: each rack at its current length (plus room for a
+   * couple of returned jokers), unknown racks at full length, the camera seat's rack only
+   * when one is shown, and the dead wall at its current size.
+   */
+  private meldLayoutOptions(): MeldLayoutOptions {
+    const rackCounts: (number | null)[] = new Array<number | null>(this.n).fill(null);
+    for (let seat = 0; seat < this.n; seat++) {
+      const rel = relSeat(seat, this.camSeat, this.n);
+      const rack = this.racks.get(seat);
+      if (this.isOwnSeat(seat)) rackCounts[rel] = rack?.tiles.length ?? 0;
+      else rackCounts[rel] = rack && rack.tiles.length ? rack.tiles.length + 2 : null;
+    }
+    return { rackCounts, deadWall: this.deadWall.length || undefined };
   }
 
   /** Fly freshly played tiles into their meld slots. */
@@ -767,10 +859,7 @@ class TableScene implements TableSceneApi {
   }
 
   private diceRest(i: number): THREE.Vector3 {
-    const { dice, radius } = cornerAngles(this.n);
-    const c = seatDir(dice).multiplyScalar(radius * 0.74);
-    const tg = seatTangent(dice);
-    return c.addScaledVector(tg, (i - 0.5) * 0.035).setY(0.01);
+    return diceRestPos(i, this.n);
   }
 
   private placeDice(values: [number, number] | null): void {
@@ -1422,7 +1511,6 @@ class TableScene implements TableSceneApi {
       for (const t of vis.tiles) this.tiles.setDead(t, false);
       vis.meld = cloneMeld(m);
     }
-    this.relayoutMelds(false);
 
     // racks
     const handOver = view.phase === 'HAND_END' || view.phase === 'MATCH_END';
@@ -1444,6 +1532,8 @@ class TableScene implements TableSceneApi {
 
     this.setDeadWall(view.phase === 'LOBBY' ? 0 : view.deadWallCount);
     this.placeDice(view.phase !== 'LOBBY' && view.wallBreak ? view.wallBreak.dice : null);
+    // melds last: their layout keeps clear of the racks and dead wall placed above
+    this.relayoutMelds(false);
 
     const sequentialPort = view.phase === 'PORT' && view.cfg.portTiming === 'sequential';
     this.setActiveSeat(view.phase === 'PLAY' || sequentialPort ? view.turn : null);
@@ -1585,17 +1675,12 @@ class TableScene implements TableSceneApi {
     // Landscape: ~66 degrees of horizontal view from a low, Mahjong-Soul-like angle.
     // Portrait / narrow: widen the fov a little, then go steeper and back far enough that
     // the whole table still fits across the screen (side avatars may be cropped).
-    const deg = THREE.MathUtils.degToRad;
-    const vfov = THREE.MathUtils.clamp(2 * Math.atan(Math.tan(deg(33)) / aspect), deg(38), deg(62));
-    this.camera.fov = THREE.MathUtils.radToDeg(vfov);
+    // (the meld layout keeps clear of the racks for these same framings)
+    const rig = cameraRig(aspect);
+    this.camera.fov = rig.fov;
     this.camera.updateProjectionMatrix();
-    const narrow = THREE.MathUtils.clamp((1.3 - aspect) / 0.8, 0, 1);
-    const halfHoriz = Math.atan(Math.tan(vfov / 2) * aspect);
-    const elev = THREE.MathUtils.lerp(Math.atan2(0.82, 1.84), deg(52), narrow);
-    const dist = Math.max(2.0, (TABLE_HALF + 0.14) / Math.tan(halfHoriz));
-    const look = new THREE.Vector3(0, TABLE_Y + THREE.MathUtils.lerp(0.1, 0.0, narrow), THREE.MathUtils.lerp(-0.22, 0.02, narrow));
-    this.camLook.copy(look);
-    this.camBase.set(0, Math.sin(elev) * dist, Math.cos(elev) * dist).add(look);
+    this.camLook.copy(rig.look);
+    this.camBase.copy(rig.pos);
   }
 
   private tick(): void {

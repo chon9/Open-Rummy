@@ -107,6 +107,8 @@ packages/
 docs/
   RULES.md          canonical rules spec
   ARCHITECTURE.md   module map and conventions
+  DESKTOP.md        Windows / Steam build: Electron main, Steam bridge, P2P protocol, smoke tests
+desktop/            Windows desktop app (Electron + steamworks.js); own package.json, not a workspace
 deploy/             nginx site, systemd unit, pm2 file, Lightsail setup and deploy scripts
 scripts/            check-secrets.mjs (secret scanner), install-hooks.mjs (pre-commit hook)
 Dockerfile          container image for Lightsail container service / any Docker host
@@ -125,7 +127,7 @@ See [.env.example](.env.example).
 | `HOST` | `0.0.0.0` | Bind address. Use `127.0.0.1` behind nginx (the deploy files do) and `0.0.0.0` in a container. |
 | `WEB_ROOT` | `packages/client/dist` | Directory holding the built client |
 | `MAX_ROOMS` | `500` | Limit on concurrent rooms |
-| `ALLOWED_ORIGINS` | empty = any | Comma-separated WebSocket origins, e.g. `https://rummy.example.com`. Set it in production. |
+| `ALLOWED_ORIGINS` | empty = any | Comma-separated WebSocket origins, e.g. `https://rummy.example.com`. Set it in production. Add `app://open-rummy` to let the Windows desktop app use the online rooms. |
 | `NODE_ENV` | unset | Set to `production` on servers (convention; the game server behaves the same) |
 | `TRUST_PROXY` | `0` | Proxy hops whose `X-Forwarded-For` is trusted for the client IP (0-10). `1` behind nginx or a load balancer; `0` when clients connect directly. The deploy files and the Docker image set `1`. |
 | `MAX_CONNECTIONS` | `4000` | Total concurrent WebSocket connections |
@@ -141,6 +143,35 @@ another proxy sits in front of nginx, `$remote_addr` is the CDN edge and all pla
 one address in the per-IP limits. Enable nginx's realip module (`set_real_ip_from` for the CDN's
 ranges plus `real_ip_header`); a commented example is in
 [deploy/nginx/open-rummy.conf](deploy/nginx/open-rummy.conf).
+
+## PC version (Windows, Steam)
+
+`desktop/` wraps the same client in Electron for Windows and adds Steam lobbies through
+[steamworks.js](https://github.com/ceifa/steamworks.js). Full notes: **[docs/DESKTOP.md](docs/DESKTOP.md)**.
+
+- **Steam lobby** (title menu "Steam 好友房 / Steam Lobby"): the host creates a friends-only or public lobby,
+  invites friends through the Steam overlay (Shift+Tab) or lets them join from the lobby browser, and starts;
+  empty seats get bots. The host's game runs the authoritative `GameHost`; guests talk to it over Steam P2P
+  with the same messages as the WebSocket server, validated by the same code
+  (`packages/shared/src/validate.ts`). Each guest only ever receives its own hand. A guest who leaves is
+  replaced by a bot; if the host leaves, the table closes for everyone.
+- **Online rooms** also work on desktop. The app connects to `wss://www.chon9.com/ws` by default; set
+  `OPEN_RUMMY_SERVER=wss://your.server/ws` (or start with `--server=<url>`, `off` to hide the mode). The
+  server must allow the app's origin: `ALLOWED_ORIGINS=...,app://open-rummy`.
+- During development the app uses Steam's test app id 480 (Spacewar). Steam must be running and logged in for
+  Steam lobbies; offline play works without it.
+
+```sh
+cd desktop
+npm install       # only inside desktop/ (never at the root for this)
+npm run build     # renderer (root vite) + Electron main/preload
+npm start         # needs the root npm install for the renderer build
+npm run dist      # Windows installer + portable exe in desktop/release
+```
+
+Two copies can be tested on one PC without Steam: `OPEN_RUMMY_STEAM=mock` with `--profile=1` and
+`--profile=2` (see docs/DESKTOP.md, section 11). The `--smoke-test=<scenario>` switch drives the real UI and
+saves screenshots, for automated checks.
 
 ## Deploy to AWS Lightsail
 

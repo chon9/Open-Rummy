@@ -7,3 +7,4 @@ export * from './engine';
 export * from './bot';
 export * from './host';
 export * from './protocol';
+export * from './validate';

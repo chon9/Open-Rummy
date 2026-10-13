@@ -60,6 +60,8 @@ export interface GameControllerOptions {
   onOpenRules(): void;
   /** extra HUD element (e.g. online connection indicator) */
   hudExtra?: HTMLElement;
+  /** text of the leave confirmation (default: by transport kind) */
+  leaveNote?: string;
 }
 
 interface QueueItem {
@@ -1081,7 +1083,7 @@ export class GameController {
   private confirmLeave(): void {
     openModal({
       title: t('table.leaveTitle'),
-      body: h('p', null, this.opts.transport.kind === 'online' ? t('table.leaveOnline') : t('table.leaveOffline')),
+      body: h('p', null, this.opts.leaveNote ?? (this.opts.transport.kind !== 'local' ? t('table.leaveOnline') : t('table.leaveOffline'))),
       actions: [
         { label: t('common.cancel'), kind: 'ghost', onClick: () => undefined },
         { label: t('table.leave'), kind: 'danger', onClick: () => this.opts.onExit() },

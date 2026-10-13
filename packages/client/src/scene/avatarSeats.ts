@@ -3,12 +3,14 @@
  * direction (active seat / table / camera, plus random glances) and reactions.
  */
 import * as THREE from 'three';
+import type { VRMHumanBoneName } from '@pixiv/three-vrm';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import type { Reaction, SeatAvatar } from './api';
 import { avatarById } from '../avatars/catalog';
 import { disposeVrm, loadVrm } from '../avatars/loader';
 import { AvatarRig, type Mood } from '../avatars/rig';
-import { AVATAR_DIST, SEAT_HIP_Y, TABLE_Y } from './constants';
+import { AVATAR_DIST, HAND_WRIST, RIM_HEIGHT, RIM_WIDTH, SEAT_HIP_Y, TABLE_HALF, TABLE_Y } from './constants';
+import { handVertices } from '../avatars/handMesh';
 import { relSeat, seatAngle, seatDir } from './layout';
 
 interface Entry {
@@ -22,6 +24,8 @@ interface Entry {
   glanceTimer: number;
   glanceLeft: number;
   glance: THREE.Vector3;
+  /** seat angle the rig's arms were last fitted at (see fitSeatedHands) */
+  fitAngle: number | null;
 }
 
 const _v = new THREE.Vector3();
@@ -33,6 +37,66 @@ const SEATED_HIPS_REF = 0.86;
 export function seatedScale(hipsHeight: number): number {
   if (!(hipsHeight > 0)) return 1;
   return THREE.MathUtils.clamp(SEATED_HIPS_REF / hipsHeight, 1, 1.1);
+}
+
+/** resting hands float this far (m) above the rim / felt: just touching, no z-fighting */
+const HAND_CONTACT = 0.002;
+/** most the elbow is raised (m) to keep a forearm out of the rim */
+const MAX_ELBOW_LIFT = 0.08;
+/** root's offset toward the table centre inside the seat anchor */
+const ROOT_FORWARD = 0.02;
+
+/** Root-space placement of a seated rig (see SeatedAvatars.place). */
+function rootPlacement(rig: AvatarRig): { scale: number; y: number } {
+  const scale = seatedScale(rig.hipsHeight);
+  return { scale, y: SEAT_HIP_Y - rig.hipsHeight * scale };
+}
+
+/**
+ * Height (above the felt) of the table surface under a world point: felt inside the square,
+ * the wooden rim around it; null off the table.
+ */
+function supportHeight(x: number, z: number): number | null {
+  const edge = Math.max(Math.abs(x), Math.abs(z));
+  if (edge <= TABLE_HALF) return 0;
+  return edge < TABLE_HALF + RIM_WIDTH ? RIM_HEIGHT : null;
+}
+
+/**
+ * Fit a placed rig's resting arms to HAND_WRIST: first the joints, then each wrist's height
+ * is corrected so the lowest point of that hand just touches the rim or felt below it
+ * (hands differ in size and thickness per model, and a seat at a corner of the square
+ * table rests its hands on the felt instead of the rim). Call after placing the root.
+ */
+export function fitSeatedHands(rig: AvatarRig): void {
+  const { scale, y } = rootPlacement(rig);
+  const lateral = HAND_WRIST.side / scale;
+  const forward = (AVATAR_DIST - ROOT_FORWARD - HAND_WRIST.radial) / scale;
+  const h0 = (TABLE_Y + HAND_WRIST.height - y) / scale;
+  const e0 = (TABLE_Y + HAND_WRIST.elbowHeight - y) / scale;
+  const heights = { left: h0, right: h0 };
+  const elbows = { left: e0, right: e0 };
+  const clearance = (side: 'left' | 'right', bones?: VRMHumanBoneName[]): number => {
+    let c = Infinity;
+    for (const v of handVertices(rig.vrm, side, bones)) {
+      const sup = supportHeight(v.x, v.z);
+      if (sup !== null) c = Math.min(c, v.y - TABLE_Y - sup);
+    }
+    return c;
+  };
+  for (let it = 0; it < 4; it++) {
+    rig.calibrateSeatedHands(lateral, forward, heights, elbows);
+    for (const side of ['left', 'right'] as const) {
+      // hand: lowest point just touching the surface below it
+      const hand = clearance(side);
+      if (Number.isFinite(hand)) heights[side] -= (hand - HAND_CONTACT) / scale;
+      // forearm: if it dips into the rim (e.g. a corner seat whose hands rest on the felt),
+      // raise the elbow so it lies on top instead
+      const arm = clearance(side, [side === 'left' ? 'leftLowerArm' : 'rightLowerArm']);
+      if (Number.isFinite(arm) && arm < 0) elbows[side] = Math.min(e0 + MAX_ELBOW_LIFT / scale, elbows[side] - (arm * 1.5) / scale);
+    }
+  }
+  rig.calibrateSeatedHands(lateral, forward, heights, elbows);
 }
 
 export interface AvatarRender {
@@ -149,6 +213,7 @@ export class SeatedAvatars {
           glanceTimer: 2 + Math.random() * 4,
           glanceLeft: 0,
           glance: new THREE.Vector3(),
+          fitAngle: null,
         };
         this.entries.set(seat, e);
       }
@@ -213,10 +278,14 @@ export class SeatedAvatars {
       const rig = e.rig;
       // petite models (short legs/torso) are scaled up a little so they sit at the table
       // like everyone else instead of peering over it with dangling feet
-      const s = seatedScale(rig.hipsHeight);
-      rig.root.scale.setScalar(s);
-      rig.root.position.set(0, SEAT_HIP_Y - rig.hipsHeight * s, 0.02);
+      const { scale, y } = rootPlacement(rig);
+      rig.root.scale.setScalar(scale);
+      rig.root.position.set(0, y, ROOT_FORWARD);
       rig.root.updateMatrixWorld(true);
+      if (e.fitAngle !== angle) {
+        e.fitAngle = angle;
+        fitSeatedHands(rig);
+      }
       rig.setLookAnchors(new THREE.Vector3(0, TABLE_Y, 0).addScaledVector(seatDir(angle), 0.25), this.cameraPos);
       rig.resetSprings();
     }
@@ -262,6 +331,20 @@ export class SeatedAvatars {
       if (head) return head.getWorldPosition(out);
     }
     return out.copy(e.anchor.position).setY(1.15);
+  }
+
+  /** Debug: loaded rigs with their seat angle (see handCheck.ts). */
+  debugRigs(): { seat: number; avatarId: string; angle: number; rig: AvatarRig }[] {
+    const out: { seat: number; avatarId: string; angle: number; rig: AvatarRig }[] = [];
+    for (const e of this.entries.values()) {
+      if (e.rig) out.push({ seat: e.seat, avatarId: e.avatarId, angle: seatAngle(relSeat(e.seat, this.camSeat, this.n), this.n), rig: e.rig });
+    }
+    return out;
+  }
+
+  /** Debug: re-run the hand fit for every loaded rig (after tweaking HAND_WRIST). */
+  debugRefit(): void {
+    for (const e of this.entries.values()) if (e.rig) fitSeatedHands(e.rig);
   }
 
   seats(): number[] {

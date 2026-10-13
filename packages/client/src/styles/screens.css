@@ -960,3 +960,134 @@
     animation: none !important;
   }
 }
+
+/* ----------------------------------------------------------------- steam -- */
+/* Desktop build only (Steam lobby screens); harmless in the web build. */
+
+.steam-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.steam-status.ok {
+  border-color: rgba(61, 214, 198, 0.45);
+}
+
+.steam-status.ok .conn-dot {
+  background: var(--teal);
+}
+
+.steam-status.bad {
+  border-color: rgba(229, 72, 77, 0.55);
+}
+
+.steam-status.checking {
+  color: var(--muted);
+  animation: breathe 2s ease-in-out infinite;
+}
+
+.steam-status small {
+  flex-basis: 100%;
+}
+
+.steam-create-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.steam-create-row .btn {
+  flex: 1 1 160px;
+}
+
+.steam-browse-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.steam-lobby-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.steam-lobby-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: 'host join' 'meta join';
+  align-items: center;
+  gap: 2px 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(233, 196, 106, 0.2);
+}
+
+.steam-lobby-host {
+  grid-area: host;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.steam-lobby-host .icon {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  fill: var(--gold);
+}
+
+.steam-lobby-meta {
+  grid-area: meta;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  font-size: 0.85em;
+}
+
+.steam-lobby-row > .btn {
+  grid-area: join;
+}
+
+.steam-empty {
+  padding: 8px 2px;
+}
+
+.steam-room-head {
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.steam-room-title {
+  font-size: clamp(20px, 3vw, 28px);
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  color: var(--gold-1);
+}
+
+.steam-char-grid {
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.steam-room .rules-details {
+  margin-top: 8px;
+}

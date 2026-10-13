@@ -16,8 +16,11 @@ import {
   BONE_KEYS,
   CLIPS,
   EXPR_KEYS,
+  SEATED_FOREARM,
+  SEATED_HAND,
   SEATED_POSE,
   STANDING_POSE,
+  forearmEuler,
   clipWeight,
   type BoneKey,
   type ClipFrame,
@@ -30,6 +33,24 @@ import {
 
 export type RigMode = 'seated' | 'standing';
 export type Mood = 'normal' | 'dead' | 'winner';
+
+/** Solve the square system A x = b (Gaussian elimination, partial pivoting); null when singular. */
+function solveLinear(A: number[][], b: number[]): number[] | null {
+  const n = b.length;
+  const M = A.map((row, i) => [...row, b[i]]);
+  for (let c = 0; c < n; c++) {
+    let piv = c;
+    for (let r = c + 1; r < n; r++) if (Math.abs(M[r][c]) > Math.abs(M[piv][c])) piv = r;
+    if (Math.abs(M[piv][c]) < 1e-9) return null;
+    [M[c], M[piv]] = [M[piv], M[c]];
+    for (let r = 0; r < n; r++) {
+      if (r === c) continue;
+      const f = M[r][c] / M[c][c];
+      for (let k = c; k <= n; k++) M[r][k] -= f * M[c][k];
+    }
+  }
+  return M.map((row, i) => row[n] / row[i]);
+}
 
 const damp = (current: number, target: number, k: number, dt: number): number =>
   current + (target - current) * (1 - Math.exp(-k * dt));
@@ -118,6 +139,8 @@ export class AvatarRig {
   private frame: ClipFrame = { pose: {}, expr: {}, bounce: 0, look: null };
   /** small per-character offsets on the seated arms so the table does not look cloned */
   private armVariant: Pose = {};
+  /** per-model arm and hand correction from calibrateSeatedHands (added to the rest pose) */
+  private armFit: Pose = {};
 
   constructor(vrm: VRM, mode: RigMode) {
     this.vrm = vrm;
@@ -152,15 +175,156 @@ export class AvatarRig {
     if (mode === 'seated') this.armVariant = seatedArmVariant(modelKey(vrm));
 
     // start in the base pose immediately (no damping from T-pose)
-    const base = this.basePose();
     for (const key of BONE_KEYS) {
-      const b = base[key] ?? [0, 0, 0];
-      const d = this.armVariant[key] ?? [0, 0, 0];
-      this.current.set(key, eulerQuat(b[0] + d[0], b[1] + d[1], b[2] + d[2], new THREE.Quaternion()));
+      this.current.set(key, new THREE.Quaternion());
       this.targetQ.set(key, new THREE.Quaternion());
     }
+    this.snapToRest();
+  }
+
+  /** Rest rotation of a bone: base pose + per-character variation + calibration. */
+  private restEuler(key: BoneKey): Vec3 {
+    const b = this.basePose()[key] ?? [0, 0, 0];
+    const d = this.armVariant[key] ?? [0, 0, 0];
+    const f = this.armFit[key] ?? [0, 0, 0];
+    return [b[0] + d[0] + f[0], b[1] + d[1] + f[1], b[2] + d[2] + f[2]];
+  }
+
+  /** Jump (no damping) to the rest pose and update the skeleton. */
+  private snapToRest(): void {
+    for (const key of BONE_KEYS) {
+      const e = this.restEuler(key);
+      eulerQuat(e[0], e[1], e[2], this.current.get(key) ?? new THREE.Quaternion());
+    }
     this.applyPose();
-    vrm.humanoid.update();
+    this.vrm.humanoid.update();
+  }
+
+  /** Raw bone position in root space for the current pose. */
+  private boneLocal(name: VRMHumanBoneName, out: THREE.Vector3): THREE.Vector3 {
+    const node = this.vrm.humanoid.getRawBoneNode(name);
+    if (!node) return out.set(0, 0, 0);
+    return this.root.worldToLocal(node.getWorldPosition(out));
+  }
+
+  /**
+   * Seated only: fit each arm so that, at rest, the wrist sits `wristSide` to its side of the
+   * midline, `wristForward` in front of the root and `wristHeight[side]` above it, with the elbow at `elbowHeight[side]` (root space,
+   * i.e. before the root's scale) - forearm lying on the table edge, hands just behind the
+   * rack. Models differ a lot in arm length and shoulder width, so one fixed pose put some
+   * hands on the tiles and others in the air; this fits every model to the same resting
+   * place. Then each hand is turned so the palm lies flat with the fingers pointing in
+   * toward the other hand (SEATED_HAND). Newton steps with numeric Jacobians; solutions are
+   * clamped to stay near the authored pose.
+   */
+  calibrateSeatedHands(
+    wristSide: number,
+    wristForward: number,
+    wristHeight: { left: number; right: number },
+    elbowHeight: { left: number; right: number },
+  ): void {
+    if (this.mode !== 'seated') return;
+    this.armFit = {};
+    for (const side of ['left', 'right'] as const) {
+      const L = side === 'left';
+      const upper: BoneKey = L ? 'leftUpperArm' : 'rightUpperArm';
+      const lower: BoneKey = L ? 'leftLowerArm' : 'rightLowerArm';
+      const baseLower = forearmEuler(side, SEATED_FOREARM.bend, SEATED_FOREARM.pronation);
+
+      // 1) joints: upper arm swing, lift and sweep, elbow bend -> wrist sideways/forward/height,
+      // elbow height
+      this.newton(
+        (q) => {
+          this.armFit[upper] = [q[0], q[3], q[1]];
+          const l = forearmEuler(side, SEATED_FOREARM.bend + q[2], SEATED_FOREARM.pronation);
+          this.armFit[lower] = [l[0] - baseLower[0], l[1] - baseLower[1], l[2] - baseLower[2]];
+        },
+        () => {
+          const w = this.boneLocal(L ? 'leftHand' : 'rightHand', _v);
+          const wx = w.x - (L ? wristSide : -wristSide);
+          const wz = w.z - wristForward;
+          const wy = w.y - wristHeight[side];
+          const e = this.boneLocal(L ? 'leftLowerArm' : 'rightLowerArm', _v);
+          return [wz, wy, e.y - elbowHeight[side], wx];
+        },
+        [0.8, 0.8, 0.6, 0.8],
+        this.vrm.humanoid.getRawBoneNode(L ? 'leftUpperArm' : 'rightUpperArm'),
+      );
+    }
+    // 2) hands: palms flat, fingers turned in
+    this.fitHand('left', SEATED_HAND.inward);
+    this.fitHand('right', SEATED_HAND.inward);
+    this.snapToRest();
+  }
+
+  /** Turn one hand so the fingers point forward and `inward`, down by SEATED_HAND.droop, palm level. */
+  private fitHand(side: 'left' | 'right', inward: number): void {
+    const L = side === 'left';
+    const hand: BoneKey = L ? 'leftHand' : 'rightHand';
+    const h = this.vrm.humanoid;
+    const wrist = h.getRawBoneNode(L ? 'leftHand' : 'rightHand');
+    const middle = h.getRawBoneNode(L ? 'leftMiddleProximal' : 'rightMiddleProximal');
+    const index = h.getRawBoneNode(L ? 'leftIndexProximal' : 'rightIndexProximal');
+    const little = h.getRawBoneNode(L ? 'leftLittleProximal' : 'rightLittleProximal');
+    if (!wrist || !middle || !index || !little) return;
+    const { droop } = SEATED_HAND;
+    // the model's left hand is on its +X side, so "in" is -X for it
+    const fx = (L ? -1 : 1) * Math.sin(inward) * Math.cos(droop);
+    const fy = -Math.sin(droop);
+    const pW = new THREE.Vector3();
+    const pM = new THREE.Vector3();
+    const pI = new THREE.Vector3();
+    const pL = new THREE.Vector3();
+    this.newton(
+      (q) => {
+        this.armFit[hand] = [q[0], q[1], q[2]];
+      },
+      () => {
+        this.root.worldToLocal(wrist.getWorldPosition(pW));
+        const f = this.root.worldToLocal(middle.getWorldPosition(pM)).sub(pW).normalize();
+        this.root.worldToLocal(index.getWorldPosition(pI));
+        const across = this.root.worldToLocal(little.getWorldPosition(pL)).sub(pI).normalize();
+        return [f.x - fx, f.y - fy, across.y];
+      },
+      [1.2, 1.2, 1.2],
+      wrist,
+    );
+  }
+
+  /**
+   * Damped Newton solve of N residuals in N unknowns (numeric Jacobian, N = limit.length).
+   * `set` applies the unknowns to the pose; `residual` is evaluated after the skeleton is
+   * updated (only `chain` and its parents/children when given).
+   */
+  private newton(set: (q: number[]) => void, residual: () => number[], limit: number[], chain: THREE.Object3D | null): void {
+    const evalAt = (q: number[]): number[] => {
+      set(q);
+      this.snapToRest();
+      // only the arm's matrices are read: update that chain (and its parents), not the model
+      if (chain) chain.updateWorldMatrix(true, true);
+      else this.root.updateMatrixWorld(true);
+      return residual();
+    };
+    const n = limit.length;
+    const p = new Array<number>(n).fill(0);
+    const eps = 0.01;
+    for (let it = 0; it < 12; it++) {
+      const r = evalAt(p);
+      if (Math.hypot(...r) < 0.002) break;
+      const J: number[][] = r.map(() => []);
+      for (let j = 0; j < n; j++) {
+        const q = p.slice();
+        q[j] += eps;
+        const rj = evalAt(q);
+        for (let i = 0; i < n; i++) J[i][j] = (rj[i] - r[i]) / eps;
+      }
+      const step = solveLinear(J, r.map((v) => -v));
+      if (!step) break;
+      const len = Math.hypot(...step);
+      const k = len > 0.25 ? 0.25 / len : 1;
+      for (let j = 0; j < n; j++) p[j] = THREE.MathUtils.clamp(p[j] + step[j] * k, -limit[j], limit[j]);
+    }
+    set(p);
   }
 
   private basePose(): Pose {
@@ -229,6 +393,10 @@ export class AvatarRig {
 
     for (const key of Object.keys(this.armVariant) as BoneKey[]) {
       const d = this.armVariant[key];
+      if (d) addTo(key, d[0], d[1], d[2]);
+    }
+    for (const key of Object.keys(this.armFit) as BoneKey[]) {
+      const d = this.armFit[key];
       if (d) addTo(key, d[0], d[1], d[2]);
     }
 

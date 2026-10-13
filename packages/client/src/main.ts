@@ -25,6 +25,8 @@ import { closeAllModals } from './ui/modal';
 import { toast } from './ui/toast';
 import { getPrefs } from './ui/prefs';
 import { onLangChange, setLang, t } from './i18n';
+import type { SteamFlow } from './ui/steamFlow';
+import { setServerUrl } from './net/serverUrl';
 
 // ---------------------------------------------------------------------------
 // layers
@@ -145,6 +147,7 @@ interface TableOptions {
   hudExtra?: HTMLElement;
   canAgain?: () => boolean;
   againPending?: boolean;
+  leaveNote?: string;
 }
 
 function openTable(transport: Transport, opts: TableOptions): GameController {
@@ -161,6 +164,7 @@ function openTable(transport: Transport, opts: TableOptions): GameController {
     hudExtra: opts.hudExtra,
     canAgain: opts.canAgain,
     againPending: opts.againPending,
+    leaveNote: opts.leaveNote,
     onOpenSettings: () => openSettings({ onQuality: (q) => game?.scene?.setQuality(q) }),
     onOpenRules: () => openRulesModal(),
   });
@@ -417,6 +421,66 @@ function tryResume(): void {
 }
 
 // ---------------------------------------------------------------------------
+// Steam (desktop build only)
+// ---------------------------------------------------------------------------
+
+/**
+ * The Electron preload exposes `window.openRummyDesktop`; the browser never has it. On
+ * desktop the page origin is `app://open-rummy`, so the WebSocket online mode connects to
+ * the server URL main supplies (`app.info().onlineServerUrl`, default wss://www.chon9.com/ws)
+ * and is hidden when main supplies none. Steam lobbies are offered next to it.
+ */
+const desktop = typeof window !== 'undefined' && window.openRummyDesktop !== undefined;
+let steamFlow: Promise<SteamFlow> | null = null;
+/** desktop only: whether a valid online server URL was configured (web: always same-origin) */
+let desktopOnline = false;
+
+/** Ask main for the online server URL (never rejects; gives up after 3 s and keeps online hidden). */
+async function configureDesktopOnline(): Promise<void> {
+  const bridge = window.openRummyDesktop;
+  if (!bridge) return;
+  try {
+    const info = await Promise.race([
+      bridge.app.info(),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 3000)),
+    ]);
+    desktopOnline = !!info && setServerUrl(info.onlineServerUrl);
+  } catch (err) {
+    console.error('[main] desktop app info failed', err);
+  }
+}
+
+function loadSteam(): Promise<SteamFlow> {
+  const bridge = window.openRummyDesktop;
+  if (!bridge) return Promise.reject(new Error('desktop bridge unavailable'));
+  if (!steamFlow) {
+    steamFlow = import('./ui/steamFlow').then((m) =>
+      m.createSteamFlow({
+        bridge,
+        show,
+        openTable,
+        endGame,
+        tableTransport: () => game?.transport ?? null,
+        goTitle,
+      }),
+    );
+    steamFlow.catch(() => {
+      steamFlow = null;
+    });
+  }
+  return steamFlow;
+}
+
+function openSteam(): void {
+  loadSteam()
+    .then((f) => f.open())
+    .catch((err) => {
+      console.error('[main] Steam module failed to load', err);
+      toast(t('steam.unavailable'), 'error');
+    });
+}
+
+// ---------------------------------------------------------------------------
 // title & static screens
 // ---------------------------------------------------------------------------
 
@@ -425,7 +489,8 @@ function goTitle(): void {
   show(() =>
     titleScreen({
       offline: showOfflineLobby,
-      online: showOnlineLobby,
+      online: !desktop || desktopOnline ? showOnlineLobby : undefined,
+      steam: desktop ? openSteam : undefined,
       rules: () => show(() => rulesScreen(goTitle)),
       settings: () => openSettings({ onQuality: (q) => game?.scene?.setQuality(q) }),
       credits: () => show(() => creditsScreen(goTitle)),
@@ -437,5 +502,15 @@ window.addEventListener('unhandledrejection', (e) => {
   console.error('[main] unhandled rejection', e.reason);
 });
 
-goTitle();
-tryResume();
+if (desktop) {
+  void configureDesktopOnline().then(() => {
+    goTitle();
+    // invites accepted in the Steam overlay (or a `+connect_lobby` launch) join right away
+    loadSteam()
+      .then((f) => f.init())
+      .catch((err) => console.error('[main] Steam module failed to load', err));
+  });
+} else {
+  goTitle();
+  tryResume();
+}

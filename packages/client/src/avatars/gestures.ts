@@ -10,6 +10,7 @@
  *   - leftLowerArm           -y  = bend the elbow forward (right arm: +y)
  *   - upperLeg               -x  = lift the thigh forward (sitting)
  */
+import * as THREE from 'three';
 import type { Reaction } from '../scene/api';
 
 export type BoneKey =
@@ -83,21 +84,41 @@ export interface GestureClip {
 // Base poses
 // ---------------------------------------------------------------------------
 
+/** Seated forearm: elbow bend, then pronation about the forearm's own axis (palms down). */
+export const SEATED_FOREARM = { bend: 1.14, pronation: 1.21 };
+
+/**
+ * Seated hands at rest (fitted per model, see AvatarRig.calibrateSeatedHands): palms flat,
+ * fingers turned in toward the other hand by `inward` (radians from straight ahead) and
+ * drooping `droop` below level, so the hands stay short of the rack in front of them.
+ */
+export const SEATED_HAND = { inward: 0.85, droop: 0.2 };
+
+/** Euler XYZ of Ry(-bend) * Rx(pronation) for the left forearm (mirrored for the right). */
+export function forearmEuler(side: 'left' | 'right', bend: number, pronation: number): Vec3 {
+  const q = new THREE.Quaternion()
+    .setFromAxisAngle(new THREE.Vector3(0, 1, 0), side === 'left' ? -bend : bend)
+    .multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), pronation));
+  const e = new THREE.Euler().setFromQuaternion(q, 'XYZ');
+  return [e.x, e.y, e.z];
+}
+
 /** Sitting at the table: legs under the table, forearms resting near the edge. */
 export const SEATED_POSE: Pose = {
   spine: [0.06, 0, 0],
   chest: [0.04, 0, 0],
   neck: [0, 0, 0],
   head: [0, 0, 0],
-  // Solved numerically against all bundled models (TABLE_Y 0.68, hips 0.6, chair 0.84 from
-  // the centre): elbows hang just off the table beside the body, forearms angle inward and
-  // rest on the rim, wrists ~3 cm over the felt edge and ~9 cm either side of the midline.
+  // Authored arm pose; at the table each model's upper arms and elbow bend are then fitted
+  // (AvatarRig.calibrateSeatedHands via scene/avatarSeats.ts fitSeatedHands) so the
+  // forearms lie on the rim and the wrists rest on it at HAND_WRIST, behind the rack.
   leftUpperArm: [-0.32, -0.47, -1.27],
   rightUpperArm: [-0.32, 0.47, 1.27],
   // forearms: elbow bend 1.14 then a 1.21 rad pronation about the forearm's own axis so the
   // palms lie flat on the table (Euler XYZ of Ry(-1.14) * Rx(1.21), mirrored for the right)
-  leftLowerArm: [1.415, -0.327, 1.114],
-  rightLowerArm: [1.415, 0.327, -1.114],
+  leftLowerArm: forearmEuler('left', SEATED_FOREARM.bend, SEATED_FOREARM.pronation),
+  rightLowerArm: forearmEuler('right', SEATED_FOREARM.bend, SEATED_FOREARM.pronation),
+  // starting point only: the hands are fitted to SEATED_HAND per model at the table
   leftHand: [0, -0.116, 0.164],
   rightHand: [0, 0.116, -0.164],
   leftUpperLeg: [-1.5, 0, 0.08],
@@ -167,9 +188,13 @@ export const CLIPS: Partial<Record<Reaction, GestureClip>> = {
     const reach = hump(0, 1.0, t);
     out.pose.spine = add(base, 'spine', [0.1 * reach, -0.06 * reach, 0]);
     out.pose.chest = add(base, 'chest', [0.06 * reach, -0.1 * reach, 0]);
-    // right arm stretched forward and down onto the felt, palm down (solved like the seated
-    // pose: wrist ~13 cm further onto the table than at rest, close to the arm's full reach)
-    out.pose.rightUpperArm = [-1.37, 0.98, 1.73];
+    // right arm stretched forward and down onto the felt, palm down, close to the arm's full
+    // reach: the fingers land ~25 cm from the table centre, in front of the rack.
+    // On the way out and back the arm is lifted so the hand arcs over the standing rack
+    // (resting hands sit behind it) instead of sweeping through it; at the peak it is down
+    // on the felt in front of the rack
+    const lift = 1 - smoothstep(0.2, 0.5, t) + smoothstep(0.6, 0.9, t);
+    out.pose.rightUpperArm = [-1.37, 0.98, 1.73 - 0.3 * lift];
     out.pose.rightLowerArm = [0.6, 0.16, -0.11];
     out.pose.rightHand = [0, -0.05, -0.29];
     out.expr.relaxed = 0.3;
